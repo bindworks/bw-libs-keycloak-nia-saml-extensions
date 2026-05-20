@@ -124,4 +124,19 @@
             </plugin>
         </plugins>
     </build>
+
+    <scm>
+        <connection>scm:git:https://github.com/bindworks/bw-libs-keycloak-nia-saml-extensions.git</connection>
+        <developerConnection>scm:git:git@github.com:bindworks/bw-libs-keycloak-nia-saml-extensions.git</developerConnection>
+        <url>https://github.com/bindworks/bw-libs-keycloak-nia-saml-extensions/tree/${project.scm.tag}</url>
+        <tag>main</tag>
+    </scm>
+
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/bindworks/bw-libs-keycloak-nia-saml-extensions</url>
+        </repository>
+    </distributionManagement>
 </project>
