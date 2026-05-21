@@ -7,13 +7,14 @@ import org.keycloak.dom.saml.v2.protocol.ExtensionsType;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.protocol.saml.preprocessor.SamlAuthenticationPreprocessor;
+import org.keycloak.saml.SamlProtocolExtensionsAwareBuilder;
+import org.keycloak.saml.common.exceptions.ProcessingException;
+import org.keycloak.saml.common.util.StaxUtil;
 import org.keycloak.sessions.AuthenticationSessionModel;
-
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.stream.XMLStreamWriter;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -69,6 +70,40 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
     private String spType = DEFAULT_SP_TYPE;
     private List<RequestedAttribute> requestedAttributes = parseRequestedAttributes(DEFAULT_REQUESTED_ATTRIBUTES);
 
+    class SPTypeNodeGenerator implements SamlProtocolExtensionsAwareBuilder.NodeGenerator {
+        @Override
+        public void write(XMLStreamWriter writer) throws ProcessingException {
+            StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "SPType", EIDAS_NS);
+            StaxUtil.writeNameSpace(writer, EIDAS_PREFIX, EIDAS_NS);
+            StaxUtil.writeCharacters(writer, spType);
+            StaxUtil.writeEndElement(writer);
+        }
+    }
+
+    class RequestedAttributesNodeGenerator implements SamlProtocolExtensionsAwareBuilder.NodeGenerator {
+        @Override
+        public void write(XMLStreamWriter writer) throws ProcessingException {
+            StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "RequestedAttributes", EIDAS_NS);
+            StaxUtil.writeNameSpace(writer, EIDAS_PREFIX, EIDAS_NS);
+            for (RequestedAttribute attribute : requestedAttributes) {
+                StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "RequestedAttribute", EIDAS_NS);
+                StaxUtil.writeAttribute(writer, "Name", attribute.attr.name);
+                StaxUtil.writeAttribute(writer, "NameFormat", ATTR_NAME_FORMAT);
+                StaxUtil.writeAttribute(writer, "isRequired", "false");
+
+                if (attribute.value != null) {
+                    StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "AttributeValue", EIDAS_NS);
+                    StaxUtil.writeCharacters(writer, attribute.value);
+                    StaxUtil.writeEndElement(writer);
+                }
+
+                StaxUtil.writeEndElement(writer);
+            }
+
+            StaxUtil.writeEndElement(writer);
+        }
+    }
+
     @Override
     public AuthnRequestType beforeSendingLoginRequest(AuthnRequestType authnRequest, AuthenticationSessionModel clientSession) {
         URI destination = authnRequest.getDestination();
@@ -79,46 +114,14 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
 
         LOG.infov("Adding eIDAS extensions for NIA destination: {0}", destination);
 
-        try {
-            ExtensionsType extensions = authnRequest.getExtensions();
-            if (extensions == null) {
-                extensions = new ExtensionsType();
-                authnRequest.setExtensions(extensions);
-            }
-
-            Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument();
-
-            // <eidas:SPType>...</eidas:SPType>
-            Element spTypeElement = createEidasElement(doc, "SPType");
-            spTypeElement.setTextContent(spType);
-            extensions.addExtension(spTypeElement);
-
-            LOG.debugv("Added extension SPType {0}", spTypeElement);
-
-            // <eidas:RequestedAttributes>...</eidas:RequestedAttributes>
-            Element requestedAttributesElement = createEidasElement(doc, "RequestedAttributes");
-
-            for (RequestedAttribute attribute : this.requestedAttributes) {
-                Element requestedAttributeElement = createEidasElement(doc, "RequestedAttribute");
-                requestedAttributeElement.setAttribute("Name", attribute.attr.name);
-                requestedAttributeElement.setAttribute("NameFormat", ATTR_NAME_FORMAT);
-                requestedAttributeElement.setAttribute("isRequired", "false");
-
-                if (attribute.value != null) {
-                    Element attrValue = createEidasElement(doc, "AttributeValue");
-                    attrValue.setTextContent(attribute.value);
-                    requestedAttributeElement.appendChild(attrValue);
-                }
-
-                requestedAttributesElement.appendChild(requestedAttributeElement);
-            }
-
-            extensions.addExtension(requestedAttributesElement);
-
-            LOG.debugv("Added extension RequestedAttributes {0}", requestedAttributesElement);
-        } catch (ParserConfigurationException e) {
-            LOG.error("Failed to create eIDAS extension elements", e);
+        ExtensionsType extensions = authnRequest.getExtensions();
+        if (extensions == null) {
+            extensions = new ExtensionsType();
+            authnRequest.setExtensions(extensions);
         }
+
+        extensions.addExtension(new SPTypeNodeGenerator());
+        extensions.addExtension(new RequestedAttributesNodeGenerator());
 
         return authnRequest;
     }
