@@ -1,0 +1,47 @@
+name: Build, Test and Release
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - keycloak-nia-saml-extensions-*
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      id-token: write
+
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Build
+        run: |
+          cd $GITHUB_WORKSPACE
+          ./mvnw "-Djava.io.tmpdir=$TMPDIR" -B -U install
+        env:
+          TMPDIR: ${{ runner.temp }}
+
+      - name: Extract project version
+        id: project
+        run: |
+          PROJECT_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          echo "version=$PROJECT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create github release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: v${{ steps.project.outputs.version }}
+          files: |
+            target/keycloak-nia-saml-extensions-${{ steps.project.outputs.version }}.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
