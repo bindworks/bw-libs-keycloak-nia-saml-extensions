@@ -12,10 +12,10 @@ nia-saml-extensions
 
 ## Configuration options
 
-| Option | Description | Default |
-|---|---|---|
-| `spType` | Value emitted in `<eidas:SPType>` | `public` |
-| `requestedAttributes` | Comma-separated list of requested claims to send | Full default attribute set |
+| Option | Description | Default           |
+|---|---|-------------------|
+| `spType` | Value emitted in `<eidas:SPType>` | `public`          |
+| `requestedAttributes` | Comma-separated list of requested claims to send | personidentifier* |
 
 ## `spType`
 
@@ -39,13 +39,14 @@ The `requestedAttributes` option configures which predefined claims are sent in 
 
 Format:
 ```text
-ClaimName,ClaimName,ClaimName:value
+ClaimName*,ClaimName,ClaimName:value
 ```
 Example:
 ```properties
-requestedAttributes=PersonIdentifier,CurrentGivenName,IsAgeOver:18,countryCodeOfBirth,phonenumber
+requestedAttributes=PersonIdentifier*,CurrentGivenName,IsAgeOver:18,countryCodeOfBirth,phonenumber
 ```
-The claim name is case-sensitive and must match one of the predefined claim names.
+The claim name is case-insensitive and must match one of the predefined claim names.
+If a claim name ends in '*', it is required.
 
 A claim may include a value using `:`:
 ```text
@@ -166,5 +167,5 @@ The provider emits NIA/eIDAS extensions equivalent to:
 - Unknown claim names are ignored.
 - Attribute order follows the order in `requestedAttributes`.
 - Values are only supported for claims that explicitly allow them.
-- Currently, all requested attributes are emitted with `isRequired="false"`.
+- Requested attributes are emitted with `isRequired="false"` unless the claim name ends in `*`.
 ```

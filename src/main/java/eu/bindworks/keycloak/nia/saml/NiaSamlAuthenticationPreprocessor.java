@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Keycloak SAML Authentication Preprocessor that adds eIDAS extensions
@@ -44,9 +45,7 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
     private static final String CONFIG_REQUESTED_ATTRIBUTES = "requestedAttributes";
 
     private static final String DEFAULT_SP_TYPE = "public";
-    private static final String DEFAULT_REQUESTED_ATTRIBUTES = "personidentifier,currentgivenname,currentfamilyname,"
-            + "currentaddress,dateofbirth,placeofbirth,countrycodeofbirth,email,age,isageover:18,"
-            + "phonenumber,tradresaid,idtype,idnumber";
+    private static final String DEFAULT_REQUESTED_ATTRIBUTES = "personidentifier*";
 
     private static final Map<String, SupportedAttribute> SUPPORTED_ATTRIBUTES = Map.ofEntries(
             Map.entry("personidentifier", new SupportedAttribute("http://eidas.europa.eu/attributes/naturalperson/PersonIdentifier", false)),
@@ -67,42 +66,7 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
     /** Pattern to match NIA identity provider URLs. */
     private static final Pattern NIA_DESTINATION_PATTERN = Pattern.compile(".*identita\\.gov\\.cz.*");
 
-    private String spType = DEFAULT_SP_TYPE;
-    private List<RequestedAttribute> requestedAttributes = parseRequestedAttributes(DEFAULT_REQUESTED_ATTRIBUTES);
-
-    class SPTypeNodeGenerator implements SamlProtocolExtensionsAwareBuilder.NodeGenerator {
-        @Override
-        public void write(XMLStreamWriter writer) throws ProcessingException {
-            StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "SPType", EIDAS_NS);
-            StaxUtil.writeNameSpace(writer, EIDAS_PREFIX, EIDAS_NS);
-            StaxUtil.writeCharacters(writer, spType);
-            StaxUtil.writeEndElement(writer);
-        }
-    }
-
-    class RequestedAttributesNodeGenerator implements SamlProtocolExtensionsAwareBuilder.NodeGenerator {
-        @Override
-        public void write(XMLStreamWriter writer) throws ProcessingException {
-            StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "RequestedAttributes", EIDAS_NS);
-            StaxUtil.writeNameSpace(writer, EIDAS_PREFIX, EIDAS_NS);
-            for (RequestedAttribute attribute : requestedAttributes) {
-                StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "RequestedAttribute", EIDAS_NS);
-                StaxUtil.writeAttribute(writer, "Name", attribute.attr.name);
-                StaxUtil.writeAttribute(writer, "NameFormat", ATTR_NAME_FORMAT);
-                StaxUtil.writeAttribute(writer, "isRequired", "false");
-
-                if (attribute.value != null) {
-                    StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "AttributeValue", EIDAS_NS);
-                    StaxUtil.writeCharacters(writer, attribute.value);
-                    StaxUtil.writeEndElement(writer);
-                }
-
-                StaxUtil.writeEndElement(writer);
-            }
-
-            StaxUtil.writeEndElement(writer);
-        }
-    }
+    private final List<SamlProtocolExtensionsAwareBuilder.NodeGenerator> extensionGenerators = new ArrayList<>();
 
     @Override
     public AuthnRequestType beforeSendingLoginRequest(AuthnRequestType authnRequest, AuthenticationSessionModel clientSession) {
@@ -114,14 +78,15 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
 
         LOG.infov("Adding eIDAS extensions for NIA destination: {0}", destination);
 
-        ExtensionsType extensions = authnRequest.getExtensions();
-        if (extensions == null) {
-            extensions = new ExtensionsType();
-            authnRequest.setExtensions(extensions);
+        ExtensionsType extensionsElement = authnRequest.getExtensions();
+        if (extensionsElement == null) {
+            extensionsElement = new ExtensionsType();
+            authnRequest.setExtensions(extensionsElement);
         }
 
-        extensions.addExtension(new SPTypeNodeGenerator());
-        extensions.addExtension(new RequestedAttributesNodeGenerator());
+        for (SamlProtocolExtensionsAwareBuilder.NodeGenerator extensionGenerator : extensionGenerators) {
+            extensionsElement.addExtension(extensionGenerator);
+        }
 
         return authnRequest;
     }
@@ -142,13 +107,25 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
 
     @Override
     public void init(Config.Scope config) {
-        spType = resolveSpType(config);
+        String spType = resolveSpType(config);
+        SPTypeNodeGenerator spTypeGenerator = new SPTypeNodeGenerator(spType);
+        extensionGenerators.add(spTypeGenerator);
 
         String configuredRequestedAttributes = config.get(CONFIG_REQUESTED_ATTRIBUTES);
-        requestedAttributes = parseRequestedAttributes(Objects.requireNonNullElse(configuredRequestedAttributes, DEFAULT_REQUESTED_ATTRIBUTES));
+        List<RequestedAttribute> requestedAttributes = parseRequestedAttributes(Objects.requireNonNullElse(configuredRequestedAttributes, DEFAULT_REQUESTED_ATTRIBUTES));
+        RequestedAttributesNodeGenerator requestedAttributesGenerator = new RequestedAttributesNodeGenerator(requestedAttributes);
+        extensionGenerators.add(requestedAttributesGenerator);
 
-        LOG.debugv("Configured NIA SPType: {0}", spType);
-        LOG.debugv("Configured NIA requested attributes count: {0}", requestedAttributes.size());
+        if (LOG.isDebugEnabled()) {
+            String requestedAttributesList = requestedAttributes.stream()
+                    .map(attr ->
+                            attr.attr.name
+                                    + (attr.isRequired ? " (required)" : "")
+                                    + (attr.value != null ? " (value: " + attr.value + ")" : ""))
+                    .collect(Collectors.joining(", "));
+            LOG.debugv("Configured NIA SPType: {0}", spType);
+            LOG.debugv("Configured NIA requested attributes: {0}", requestedAttributesList);
+        }
     }
 
     @Override
@@ -195,6 +172,7 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
             }
 
             String claimName = token;
+            boolean isRequired = false;
             String attributeValue = null;
 
             int valueSeparatorIndex = token.indexOf(':');
@@ -203,6 +181,11 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
                 attributeValue = token.substring(valueSeparatorIndex + 1).trim();
             } else {
                 claimName = claimName.trim().toLowerCase();
+            }
+
+            if (claimName.endsWith("*")) {
+                claimName = claimName.substring(0, claimName.length() - 1);
+                isRequired = true;
             }
 
             SupportedAttribute supportedAttribute = SUPPORTED_ATTRIBUTES.get(claimName);
@@ -220,7 +203,7 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
                 attributeValue = null;
             }
 
-            parsedAttributes.add(new RequestedAttribute(supportedAttribute, attributeValue));
+            parsedAttributes.add(new RequestedAttribute(supportedAttribute, isRequired, attributeValue));
         }
 
         return parsedAttributes;
@@ -229,6 +212,54 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
     private record SupportedAttribute(String name, boolean supportsValue) {
     }
 
-    private record RequestedAttribute(SupportedAttribute attr, String value) {
+    private record RequestedAttribute(SupportedAttribute attr, boolean isRequired, String value) {
+    }
+
+    // --- NodeGenerators ---
+
+    static class SPTypeNodeGenerator implements SamlProtocolExtensionsAwareBuilder.NodeGenerator {
+        private final String spType;
+
+        public SPTypeNodeGenerator(String spType) {
+            this.spType = spType;
+        }
+
+        @Override
+        public void write(XMLStreamWriter writer) throws ProcessingException {
+            StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "SPType", EIDAS_NS);
+            StaxUtil.writeNameSpace(writer, EIDAS_PREFIX, EIDAS_NS);
+            StaxUtil.writeCharacters(writer, spType);
+            StaxUtil.writeEndElement(writer);
+        }
+    }
+
+    static class RequestedAttributesNodeGenerator implements SamlProtocolExtensionsAwareBuilder.NodeGenerator {
+        private final List<RequestedAttribute> requestedAttributes;
+
+        public RequestedAttributesNodeGenerator(List<RequestedAttribute> requestedAttributes) {
+            this.requestedAttributes = requestedAttributes;
+        }
+
+        @Override
+        public void write(XMLStreamWriter writer) throws ProcessingException {
+            StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "RequestedAttributes", EIDAS_NS);
+            StaxUtil.writeNameSpace(writer, EIDAS_PREFIX, EIDAS_NS);
+            for (RequestedAttribute attribute : requestedAttributes) {
+                StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "RequestedAttribute", EIDAS_NS);
+                StaxUtil.writeAttribute(writer, "Name", attribute.attr.name);
+                StaxUtil.writeAttribute(writer, "NameFormat", ATTR_NAME_FORMAT);
+                StaxUtil.writeAttribute(writer, "isRequired", attribute.isRequired ? "true" : "false");
+
+                if (attribute.value != null) {
+                    StaxUtil.writeStartElement(writer, EIDAS_PREFIX, "AttributeValue", EIDAS_NS);
+                    StaxUtil.writeCharacters(writer, attribute.value);
+                    StaxUtil.writeEndElement(writer);
+                }
+
+                StaxUtil.writeEndElement(writer);
+            }
+
+            StaxUtil.writeEndElement(writer);
+        }
     }
 }
