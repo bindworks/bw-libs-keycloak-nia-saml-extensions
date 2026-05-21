@@ -41,7 +41,8 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: v${{ steps.project.outputs.version }}
+          working_directory: target
           files: |
-            target/keycloak-nia-saml-extensions-${{ steps.project.outputs.version }}.jar
+            keycloak-nia-saml-extensions-${{ steps.project.outputs.version }}.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
