@@ -8,8 +8,8 @@ on:
 jobs:
   build:
     permissions:
-      contents: read
-      id-token: write
+      contents: write
+      packages: write
 
     name: Build and Test
     runs-on: ubuntu-latest
