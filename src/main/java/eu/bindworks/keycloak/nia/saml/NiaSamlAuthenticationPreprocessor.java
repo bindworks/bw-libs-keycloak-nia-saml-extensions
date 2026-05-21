@@ -93,26 +93,29 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
             spTypeElement.setTextContent(spType);
             extensions.addExtension(spTypeElement);
 
+            LOG.debugv("Added extension SPType {0}", spTypeElement);
+
             // <eidas:RequestedAttributes>...</eidas:RequestedAttributes>
-            Element requestedAttributes = createEidasElement(doc, "RequestedAttributes");
+            Element requestedAttributesElement = createEidasElement(doc, "RequestedAttributes");
 
             for (RequestedAttribute attribute : this.requestedAttributes) {
-                Element requestedAttribute = createEidasElement(doc, "RequestedAttribute");
-                requestedAttribute.setAttribute("Name", attribute.name);
-                requestedAttribute.setAttribute("NameFormat", ATTR_NAME_FORMAT);
-                requestedAttribute.setAttribute("isRequired", "false");
+                Element requestedAttributeElement = createEidasElement(doc, "RequestedAttribute");
+                requestedAttributeElement.setAttribute("Name", attribute.attr.name);
+                requestedAttributeElement.setAttribute("NameFormat", ATTR_NAME_FORMAT);
+                requestedAttributeElement.setAttribute("isRequired", "false");
 
                 if (attribute.value != null) {
                     Element attrValue = createEidasElement(doc, "AttributeValue");
                     attrValue.setTextContent(attribute.value);
-                    requestedAttribute.appendChild(attrValue);
+                    requestedAttributeElement.appendChild(attrValue);
                 }
 
-                requestedAttributes.appendChild(requestedAttribute);
+                requestedAttributesElement.appendChild(requestedAttributeElement);
             }
 
-            extensions.addExtension(requestedAttributes);
+            extensions.addExtension(requestedAttributesElement);
 
+            LOG.debugv("Added extension RequestedAttributes {0}", requestedAttributesElement);
         } catch (ParserConfigurationException e) {
             LOG.error("Failed to create eIDAS extension elements", e);
         }
@@ -214,7 +217,7 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
                 attributeValue = null;
             }
 
-            parsedAttributes.add(new RequestedAttribute(supportedAttribute.name(), attributeValue));
+            parsedAttributes.add(new RequestedAttribute(supportedAttribute, attributeValue));
         }
 
         return parsedAttributes;
@@ -223,6 +226,6 @@ public class NiaSamlAuthenticationPreprocessor implements SamlAuthenticationPrep
     private record SupportedAttribute(String name, boolean supportsValue) {
     }
 
-    private record RequestedAttribute(String name, String value) {
+    private record RequestedAttribute(SupportedAttribute attr, String value) {
     }
 }
